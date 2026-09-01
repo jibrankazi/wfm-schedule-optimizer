@@ -1,11 +1,13 @@
 # wfm-schedule-optimizer
 
-[![tests](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/tests.yml/badge.svg)](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/tests.yml)
-![python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![ci-cd](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/ci-cd.yml)
+![python](https://img.shields.io/badge/python-3.12-blue)
 ![solver](https://img.shields.io/badge/solver-CBC%20via%20PuLP-orange)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-A contact centre workforce scheduler. Erlang C sizes each 15-minute interval, then a mixed-integer program assigns 60 named agents to shifts across a five-day week under contracted hours, booked leave and start-time accommodations.
+A contact centre workforce scheduler and intraday operations service. Erlang C sizes each 15-minute interval, Erlang A quantifies finite-patience abandonment, and a mixed-integer program assigns 60 named agents to shifts across a five-day week under contracted hours, booked leave and start-time accommodations.
+
+The operational layer adds a deterministic queue rebalancer, a tamper-evident SHA-256 audit chain, a FastAPI gateway, and a three-persona Streamlit console. The supplied data remains synthetic.
 
 ![Scheduled versus required staffing](assets/coverage_vs_requirement.png)
 
@@ -92,10 +94,10 @@ So 40 is a demand-curve problem needing different shift shapes or more establish
 ```bash
 git clone https://github.com/jibrankazi/wfm-schedule-optimizer.git
 cd wfm-schedule-optimizer
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 python run_pipeline.py        # solve the week, write charts and CSVs
-pytest -q                     # 49 tests
+pytest -q                     # unit and integration tests
 ```
 
 CBC ships inside PuLP, so there is no solver to install separately. The full solve takes about a minute; `--step 4` trades roughly nine points of coverage for a six-second solve.
@@ -108,6 +110,23 @@ CBC ships inside PuLP, so there is no solver to install separately. The full sol
 ```
 
 **[notebooks/schedule_optimization.ipynb](notebooks/schedule_optimization.ipynb)** walks the whole thing with outputs already rendered, so it reads in the browser without cloning.
+
+## API and portal
+
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+streamlit run app.py
+```
+
+Open `http://localhost:8000/docs` for the REST contract and `http://localhost:8501` for the portal. The API exposes vector Erlang C sizing, Erlang A metrics, interval rebalancing, and audit-chain verification.
+
+To run both services in containers:
+
+```bash
+docker compose up --build
+```
+
+Set `AUDIT_VAULT_PATH` to persist the audit JSONL file. The Compose configuration mounts it on a named volume.
 
 ## What each agent does
 
@@ -128,8 +147,13 @@ run_pipeline.py
 ├── optimizer.py — the MILP
 │   ├── solve_schedule() — named agents, all constraints
 │   └── coverage_lower_bound() — the relaxation, for splitting the shortfall
+├── erlang_advanced.py — vector Erlang C and finite-patience Erlang A
+├── smart_rebalancer.py — priority-based offline-duty pre-emption
+├── audit_vault.py — append-only, SHA-256 chained audit records
+├── api/main.py — FastAPI queueing, rebalancing and audit endpoints
+├── app.py — Streamlit operations console
 ├── reporting.py — coverage chart, week view, agent Gantt
-└── tests/ — 49 tests, including re-derivation of every constraint from the output
+└── tests/ — queueing, audit, API, rebalancing and solver validation
 ```
 
 Constraints are verified by re-deriving them from the returned assignments rather than trusting the solver: no double bookings, no contracted maximum breached, nobody scheduled during their own booked leave, no part-timer given a full-time shift, and the reported coverage array reconstructed from scratch.
@@ -138,10 +162,11 @@ Constraints are verified by re-deriving them from the returned assignments rathe
 
 - **Shrinkage is explicit, not an uplift.** Breaks are carved out of the coverage vectors rather than added as a blanket percentage. Unplanned absence and adherence are not modelled, so real coverage would run below what is shown.
 - **Demand is deterministic.** Each interval takes its expected volume. A real forecast carries error, and a schedule optimised against a point estimate is fragile to it.
-- **Erlang C assumes no abandonment and infinite queue patience.** Erlang A relaxes that and usually reduces required headcount.
+- **Erlang C still drives scheduled headcount.** Erlang A reports finite-patience operational metrics; it is not yet wired into the MILP requirement curve.
 - **Intervals are independent.** Erlang C is steady-state; calls queueing at 10:15 and still waiting at 10:30 are not carried across.
 - **Optimality is not proven.** With 60 largely interchangeable agents the model is highly symmetric, so the search stops at a 3% gap. The relaxation bound is the honest measure of what is left on the table.
 - **All data is synthetic and seeded.** No real call volumes, no real employees, no real contact centre.
+- **The audit vault is tamper-evident, not immutable infrastructure.** A hash chain detects modified records but cannot prevent a privileged actor from deleting the tail or rewriting the file and all subsequent hashes. External hash anchoring, access controls, retention policy, and independent legal review are still required; this repository does not certify MFIPPA or PIPEDA compliance.
 
 ## License
 

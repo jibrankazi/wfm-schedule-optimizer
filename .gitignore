@@ -10,3 +10,6 @@ dist/
 .DS_Store
 *.lp
 *.mps
+.mypy_cache/
+.streamlit/
+data/audit_vault.jsonl
