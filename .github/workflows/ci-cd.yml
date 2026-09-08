@@ -15,20 +15,25 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements-dev.txt
-      - run: mypy src/erlang_advanced.py src/audit_vault.py src/smart_rebalancer.py api/main.py
-      - run: pytest -q
-      - name: Solve the weekly schedule
-        run: python run_pipeline.py --time-limit 90
 
-  package:
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: wfm-schedule-optimizer:${{ github.sha }}
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Types
+        run: mypy src/ api/
+
+      - name: Tests
+        run: pytest -q
+
+      # The formulation is guarded separately from the features. A two-sided
+      # coverage equality shipped once already and no feature test caught it.
+      - name: Formulation invariants
+        run: pytest -q tests/test_formulation_invariants.py tests/test_formulation_ablation.py
+
+      # A published artifact is a claim about the model, so a regressed one
+      # must fail the build rather than sit in the repository unnoticed.
+      - name: Published results
+        run: python scripts/check_baseline.py
+
+      - name: Demo solve completes
+        run: python run_247.py --solve --demo

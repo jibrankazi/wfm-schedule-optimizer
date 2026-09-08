@@ -4,8 +4,11 @@ import numpy as np
 import pytest
 
 from src.erlang import required_agents
+from src.erlang import service_level
 from src.erlang_advanced import (
     calculate_erlang_a_metrics,
+    erlang_a_service_level,
+    required_agents_erlang_a,
     vectorized_erlang_c_headcount,
 )
 
@@ -60,3 +63,48 @@ def test_erlang_a_zero_arrivals_and_validation():
     assert calculate_erlang_a_metrics(0, 300, 120, 5)["answer_probability"] == 1.0
     with pytest.raises(ValueError, match="num_servers"):
         calculate_erlang_a_metrics(1.0, 300, 120, 0)
+
+
+def test_erlang_a_service_level_converges_to_erlang_c_with_long_patience():
+    actual = erlang_a_service_level(45 / 900, 320, 1e9, 20, 20)
+    expected = service_level(20, 45, 320, 20)
+    assert actual == pytest.approx(expected, abs=1e-6)
+
+
+def test_erlang_a_service_level_improves_with_servers():
+    levels = [
+        erlang_a_service_level(45 / 900, 320, 120, servers, 20)
+        for servers in (15, 18, 21)
+    ]
+    assert levels == sorted(levels)
+
+
+def test_erlang_a_headcount_inversion_returns_the_minimum_compliant_count():
+    agents = required_agents_erlang_a(
+        45,
+        320,
+        120,
+        target_sl=0.80,
+        target_sec=20,
+        max_abandon_rate=0.05,
+        max_occupancy=0.85,
+    )
+    assert agents == 19
+
+    metrics = calculate_erlang_a_metrics(45 / 900, 320, 120, agents)
+    achieved = erlang_a_service_level(45 / 900, 320, 120, agents, 20)
+    assert achieved >= 0.80
+    assert metrics["abandonment_rate"] <= 0.05
+    assert metrics["occupancy"] <= 0.85
+
+    previous = calculate_erlang_a_metrics(45 / 900, 320, 120, agents - 1)
+    previous_sl = erlang_a_service_level(45 / 900, 320, 120, agents - 1, 20)
+    assert (
+        previous_sl < 0.80
+        or previous["abandonment_rate"] > 0.05
+        or previous["occupancy"] > 0.85
+    )
+
+
+def test_erlang_a_headcount_uses_presence_floor_at_zero_demand():
+    assert required_agents_erlang_a(0, 320, 120, min_presence_floor=4) == 4

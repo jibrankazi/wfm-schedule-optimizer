@@ -16,10 +16,14 @@ from pathlib import Path
 # break the second of those.
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
+
+import pandas as pd
 
 from .generator import DAY_NAMES, DAYS, INTERVALS_PER_DAY, interval_labels
 from .optimizer import Schedule
+from .profiles import ServiceProfile
 
 REQUIRED_COLOUR = "#C0392B"
 SCHEDULED_COLOUR = "#2E86C1"
@@ -32,7 +36,7 @@ def plot_coverage(
     day: int = 0,
     save_path: str | Path | None = None,
     dpi: int = 150,
-):
+) -> Figure:
     """Scheduled headcount against the Erlang C requirement for one day."""
     labels = interval_labels()
     required = schedule.required[day]
@@ -97,7 +101,9 @@ def plot_coverage(
     return figure
 
 
-def plot_week_coverage(schedule: Schedule, save_path: str | Path | None = None, dpi: int = 150):
+def plot_week_coverage(
+    schedule: Schedule, save_path: str | Path | None = None, dpi: int = 150
+) -> Figure:
     """All five days stacked, for the shape of the week at a glance."""
     figure, axes = plt.subplots(DAYS, 1, figsize=(14, 13), sharex=True)
     labels = interval_labels()
@@ -157,7 +163,7 @@ def plot_shift_gantt(
     day: int = 0,
     save_path: str | Path | None = None,
     dpi: int = 150,
-):
+) -> Figure:
     """Per-agent shift bars for one day, breaks shown as gaps.
 
     Sorted by start time, which makes the staggered-start pattern the
@@ -204,6 +210,70 @@ def plot_shift_gantt(
     axis.set_xlim(-0.5, INTERVALS_PER_DAY - 0.5)
     figure.tight_layout()
 
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(save_path, dpi=dpi, bbox_inches="tight")
+    return figure
+
+
+def plot_profile_comparison(
+    demand: "pd.DataFrame",
+    profiles: dict[str, "ServiceProfile"] | None = None,
+    save_path: str | Path | None = None,
+    dpi: int = 150,
+) -> Figure:
+    """Same demand, four service contracts: what each one costs to staff."""
+    from .profile_analysis import compare_profiles, size_demand
+    from .profiles import PROFILES
+
+    profiles = profiles or PROFILES
+    summary = compare_profiles(demand, profiles)
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(15, 6), gridspec_kw={"width_ratios": [1.35, 1]})
+
+    day_one = demand[demand.day == 0]
+    palette = ["#2E86C1", "#8E44AD", "#C0392B", "#16A085"]
+    for colour, profile in zip(palette, profiles.values()):
+        sized = size_demand(day_one, profile)
+        left.step(
+            range(len(sized)), sized.required_agents, where="mid",
+            linewidth=2.1, color=colour, label=f"{profile.name} ({profile.label()})",
+        )
+    left.set_xlabel("Interval (15 minutes)", fontweight="bold")
+    left.set_ylabel("Agents required", fontweight="bold")
+    left.set_title("Same demand curve, four service contracts", fontsize=12, fontweight="bold")
+    left.grid(axis="y", linestyle="--", alpha=0.4)
+    left.set_axisbelow(True)
+    left.legend(fontsize=9, frameon=True)
+
+    bottom = None
+    for label, colour in (
+        ("set_by_service_level", "#2E86C1"),
+        ("set_by_abandonment", "#8E44AD"),
+        ("set_by_occupancy", "#E67E22"),
+        ("set_by_floor", "#7F8C8D"),
+        ("set_by_multiple", "#34495E"),
+    ):
+        values = summary[label].to_numpy()
+        right.barh(
+            summary.profile, values, left=bottom, color=colour,
+            label=label.replace("set_by_", "").replace("_", " "),
+        )
+        bottom = values if bottom is None else bottom + values
+
+    right.set_xlabel("Intervals, by which criterion set the headcount", fontweight="bold")
+    right.set_title("What actually drives the number", fontsize=12, fontweight="bold")
+    right.invert_yaxis()
+    right.legend(fontsize=9, loc="lower right", frameon=True)
+    right.grid(axis="x", linestyle="--", alpha=0.35)
+    right.set_axisbelow(True)
+    for index, row in enumerate(summary.itertuples()):
+        right.text(
+            row.agent_intervals * 0.0 + 4, index,
+            f"{row.agent_hours:,.0f}h", va="center", fontsize=9, color="white", fontweight="bold",
+        )
+
+    figure.tight_layout()
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(save_path, dpi=dpi, bbox_inches="tight")

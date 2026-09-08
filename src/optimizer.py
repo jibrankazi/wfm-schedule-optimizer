@@ -28,6 +28,7 @@ Two departures from the textbook formulation, both deliberate:
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -224,20 +225,26 @@ def solve_schedule(
     elapsed = time.perf_counter() - started
 
     status = pulp.LpStatus[model.status]
+    if status != "Optimal":
+        raise RuntimeError(
+            f"CBC returned {status!r}; refusing to publish an unverified schedule"
+        )
     assignments: list[Assignment] = []
     coverage = np.zeros((DAYS, INTERVALS_PER_DAY), dtype=int)
     agent_hours = {a.id: 0.0 for a in agents}
     by_agent = {a.id: a for a in agents}
 
-    if status in {"Optimal", "Not Solved"}:
-        for (agent_id, day, template_id), variable in x.items():
-            if variable.value() and variable.value() > 0.5:
-                template = by_id[template_id]
-                assignments.append(
-                    Assignment(agent_id, by_agent[agent_id].name, day, template)
-                )
-                agent_hours[agent_id] += template.paid_hours
-                coverage[day] += np.array(template.coverage, dtype=int)
+    for (agent_id, day, template_id), variable in x.items():
+        value = variable.value()
+        if value is None or not math.isclose(value, round(value), abs_tol=1e-7):
+            raise RuntimeError("CBC returned a fractional or missing assignment value")
+        if round(value) == 1:
+            template = by_id[template_id]
+            assignments.append(
+                Assignment(agent_id, by_agent[agent_id].name, day, template)
+            )
+            agent_hours[agent_id] += template.paid_hours
+            coverage[day] += np.array(template.coverage, dtype=int)
 
     shortfall = {
         agent_id: round(variable.value(), 2)

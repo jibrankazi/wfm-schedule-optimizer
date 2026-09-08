@@ -1,0 +1,32 @@
+[
+  {
+    "pattern": "weekday_extended",
+    "roster": 65,
+    "shifts": 315,
+    "paid_hours": 2314.0,
+    "gap_pct": 0.0,
+    "coverage_pct": 98.96,
+    "understaffed": 13,
+    "floor_breaches": 0
+  },
+  {
+    "pattern": "continuous_247",
+    "roster": 150,
+    "shifts": 692,
+    "paid_hours": 5190.0,
+    "gap_pct": 0.0,
+    "coverage_pct": 100.0,
+    "understaffed": 0,
+    "floor_breaches": 0
+  },
+  {
+    "pattern": "seven_day_extended",
+    "roster": 100,
+    "shifts": 400,
+    "paid_hours": 2956.0,
+    "gap_pct": 0.0,
+    "coverage_pct": 100.0,
+    "understaffed": 0,
+    "floor_breaches": 0
+  }
+]

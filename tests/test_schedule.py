@@ -1,4 +1,5 @@
 import numpy as np
+import pulp
 import pytest
 
 from src.generator import (
@@ -168,8 +169,23 @@ def test_capacity_report_flags_a_roster_that_cannot_meet_demand(agents, template
 
 # --- the solved schedule ---------------------------------------------------
 def test_solver_returns_a_schedule(schedule):
-    assert schedule.status in {"Optimal", "Not Solved"}
+    assert schedule.status == "Optimal"
     assert schedule.assignments
+
+
+def test_solver_refuses_a_not_solved_allocation(monkeypatch, agents, demand):
+    def leave_unsolved(model, solver):
+        model.status = pulp.LpStatusNotSolved
+        return model.status
+
+    monkeypatch.setattr(pulp.LpProblem, "solve", leave_unsolved)
+    with pytest.raises(RuntimeError, match="refusing to publish"):
+        solve_schedule(
+            agents[:2],
+            build_shift_templates(step=8),
+            demand,
+            time_limit_sec=1,
+        )
 
 
 def test_no_agent_works_two_shifts_in_one_day(schedule):

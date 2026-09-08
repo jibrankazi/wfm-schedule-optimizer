@@ -1,0 +1,49 @@
+{
+  "run_configuration": {
+    "seed": 42,
+    "peak_calls": 70.0,
+    "time_limit_sec": 185,
+    "requested_gap": 0.03
+  },
+  "model_build": {
+    "agents": 65,
+    "intervals": 672,
+    "shift_options": 840,
+    "binary_assignment_variables": 22680,
+    "total_model_variables": 24138,
+    "constraints": 2937,
+    "required_agent_intervals": 8460,
+    "presence_floor_constraint_intervals": 672,
+    "floor_binding_intervals": 163,
+    "peak_required_agents": 34
+  },
+  "measured_result": {
+    "status": "Feasible",
+    "solver_status": "Optimal",
+    "termination_reason": "time limit",
+    "solve_seconds": 192.35,
+    "objective": 29900.0,
+    "objective_bound": 14124.036,
+    "relative_gap_pct": 52.762,
+    "binary_assignment_variables": 22680,
+    "total_model_variables": 24138,
+    "constraints": 2937,
+    "shifts_assigned": 337,
+    "scheduled_hours": 2322.0,
+    "understaffed_agent_intervals": 280,
+    "overstaffed_agent_intervals": 527,
+    "coverage_compliance_pct": 78.87,
+    "demand_fulfilment_pct": 96.69,
+    "floor_breach_intervals": 1,
+    "floor_breach_agent_intervals": 1,
+    "agents_below_contracted_minimum": 0,
+    "contracted_minimum_shortfall_hours": 0,
+    "agents_below_weekly_night_minimum": 18,
+    "weekly_night_shortfall_shifts": 18
+  },
+  "metric_definitions": {
+    "relative_gap_pct": "100 * (incumbent objective - lower bound) / abs(incumbent objective)",
+    "coverage_compliance_pct": "share of weekly intervals where scheduled_active is at least required_agents",
+    "demand_fulfilment_pct": "sum(min(scheduled_active, required_agents)) divided by sum(required_agents)"
+  }
+}

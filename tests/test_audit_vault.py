@@ -16,36 +16,36 @@ def test_mutations_are_hash_chained_and_verified():
 
 
 def test_caller_cannot_mutate_a_hashed_delta():
-    delta = {"roles": ["QA"]}
+    delta = {"roles": ["QUALITY"]}
     vault = SovereignAuditVault()
     block = vault.record_mutation("system", "REBALANCE", "AGT-001", delta)
-    delta["roles"].append("X")
+    delta["roles"].append("QUEUE")
     returned = block.state_delta
-    returned["roles"].append("WD")
+    returned["roles"].append("TRAINING")
 
-    assert block.state_delta == {"roles": ["QA"]}
+    assert block.state_delta == {"roles": ["QUALITY"]}
     assert vault.verify_chain_integrity()
 
 
 def test_jsonl_chain_survives_restart(tmp_path):
     path = tmp_path / "audit.jsonl"
     vault = SovereignAuditVault(path, clock=lambda: 1_700_000_000.0)
-    vault.record_mutation("api", "OVERRIDE", "AGT-003", {"from": "QA", "to": "X"})
+    vault.record_mutation("api", "OVERRIDE", "AGT-003", {"from": "QUALITY", "to": "QUEUE"})
 
     reloaded = SovereignAuditVault(path)
     assert len(reloaded.chain) == 2
-    assert reloaded.chain[-1].state_delta == {"from": "QA", "to": "X"}
+    assert reloaded.chain[-1].state_delta == {"from": "QUALITY", "to": "QUEUE"}
     assert reloaded.verify_chain_integrity()
 
 
 def test_tampered_persisted_block_is_rejected(tmp_path):
     path = tmp_path / "audit.jsonl"
     vault = SovereignAuditVault(path)
-    vault.record_mutation("api", "OVERRIDE", "AGT-003", {"from": "QA", "to": "X"})
+    vault.record_mutation("api", "OVERRIDE", "AGT-003", {"from": "QUALITY", "to": "QUEUE"})
 
     lines = path.read_text(encoding="utf-8").splitlines()
     record = json.loads(lines[1])
-    record["delta"]["to"] = "WD"
+    record["delta"]["to"] = "TRAINING"
     lines[1] = json.dumps(record)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
