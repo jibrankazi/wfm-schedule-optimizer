@@ -12,7 +12,6 @@ jobs:
     timeout-minutes: 30
     env:
       MPLBACKEND: Agg
-      AUDIT_VAULT_PATH: ${{ runner.temp }}/wfm-audit-only.jsonl
     steps:
       - name: Checkout the exact application commit under review
         uses: actions/checkout@v4
@@ -41,6 +40,7 @@ jobs:
           import traceback
           
           root = Path("audit-evidence")
+          os.environ["AUDIT_VAULT_PATH"] = str(Path(os.environ["RUNNER_TEMP"]) / "wfm-audit-only.jsonl")
           root.mkdir(exist_ok=True)
           checks = []
           probes = []
