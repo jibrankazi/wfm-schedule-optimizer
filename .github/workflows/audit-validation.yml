@@ -1,0 +1,289 @@
+name: Repository audit validation
+on:
+  push:
+    branches:
+      - audit/runner-validation-e37dda1-20260911
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MPLBACKEND: Agg
+      AUDIT_VAULT_PATH: ${{ runner.temp }}/wfm-audit-only.jsonl
+    steps:
+      - name: Checkout the exact application commit under review
+        uses: actions/checkout@v4
+        with:
+          ref: e37dda102129c59ad1c0450ac27b530d2f351790
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install the reviewed dependency pins
+        run: pip install -r requirements-dev.txt
+      - name: Run synthetic validation and collect evidence
+        run: |
+          python - <<'PY'
+          import asyncio
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import traceback
+          
+          root = Path("audit-evidence")
+          root.mkdir(exist_ok=True)
+          checks = []
+          probes = []
+          expected_sha = "e37dda102129c59ad1c0450ac27b530d2f351790"
+          actual_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert actual_sha == expected_sha, (expected_sha, actual_sha)
+          (root / "source.json").write_text(json.dumps({
+              "reviewed_commit": actual_sha,
+              "workflow_commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "data": "repository synthetic fixtures only; no deployment or production publication",
+          }, indent=2))
+          
+          def command(name, args, timeout=240, semantic=None):
+              started = time.monotonic()
+              path = root / (name + ".log")
+              print("START", name, args, flush=True)
+              rc = None
+              error = None
+              try:
+                  with path.open("w") as log:
+                      proc = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT,
+                                            timeout=timeout, text=True, check=False)
+                  rc = proc.returncode
+                  if semantic and rc == 0:
+                      error = semantic()
+              except Exception as exc:
+                  error = type(exc).__name__ + ": " + str(exc)
+              result = {"name": name, "command": args, "returncode": rc, "error": error,
+                        "status": "passed" if rc == 0 and error is None else "failed",
+                        "seconds": round(time.monotonic() - started, 2)}
+              checks.append(result)
+              print("CHECK", json.dumps(result), flush=True)
+              if path.exists():
+                  print(path.read_text(errors="replace")[-12000:], flush=True)
+          
+          def probe(name, function):
+              try:
+                  evidence = function()
+                  probes.append({"name": name, **evidence})
+              except Exception as exc:
+                  probes.append({"name": name, "status": "error",
+                                 "error": type(exc).__name__ + ": " + str(exc),
+                                 "traceback": traceback.format_exc()})
+              print("PROBE", json.dumps(probes[-1]), flush=True)
+          
+          command("pip-check", [sys.executable, "-m", "pip", "check"], 60)
+          command("dependency-freeze", [sys.executable, "-m", "pip", "freeze"], 60)
+          command("bytecompile", [sys.executable, "-m", "compileall", "-q", "src", "api",
+                  "run_247.py", "run_pattern.py", "run_pipeline.py", "run_charts.py",
+                  "export_schedules.py"], 60)
+          command("full-grid-model-build", [sys.executable, "run_247.py"], 120)
+          
+          from src.continuous import (TimeGrid, DEFAULT_247_GRID, WeeklyAgent,
+              build_weekly_shift_options, eligible_for_option)
+          from src.optimizer_247 import _demand_arrays, WeeklySolverConfig, solve_weekly_schedule
+          from src.optimizer_cpsat import solve_weekly_schedule_cpsat
+          from src.csv_adapter import load_demand_csv
+          from src.audit_vault import SovereignAuditVault, AuditIntegrityError
+          import numpy as np
+          import pandas as pd
+          
+          def grid_probe():
+              rows = []
+              for mins in (15, 30):
+                  grid = TimeGrid(days=7, intervals_per_day=1440 // mins, interval_minutes=mins)
+                  option = next(o for o in build_weekly_shift_options(grid) if o.shape == "FT8")
+                  rows.append({"interval_minutes": mins, "span_intervals": option.span,
+                               "elapsed_hours": option.span * mins / 60,
+                               "paid_hours": option.paid_hours})
+              return {"status": "finding" if rows[1]["elapsed_hours"] != 8.5 else "passed",
+                      "expected": "FT8 remains 8.5 elapsed hours including unpaid meal", "actual": rows}
+          probe("grid-resolution-consistency", grid_probe)
+          
+          def fractional_demand():
+              grid = DEFAULT_247_GRID
+              frame = pd.DataFrame({"week_interval": range(grid.total_intervals),
+                  "required_agents": np.full(grid.total_intervals, 3.9),
+                  "min_presence_floor": np.full(grid.total_intervals, 3.9)})
+              path = root / "fractional-input.csv"
+              frame.to_csv(path, index=False)
+              try:
+                  loaded = load_demand_csv(path)
+                  required, floor = _demand_arrays(loaded, grid)
+              except ValueError as exc:
+                  return {"status": "passed", "rejection": str(exc)}
+              return {"status": "finding", "input_required": 3.9, "input_floor": 3.9,
+                      "compiled_required": int(required[0]), "compiled_floor": int(floor[0]),
+                      "expected": "reject non-integral headcounts instead of silently truncating"}
+          probe("fractional-demand-validation", fractional_demand)
+          
+          def night_cap():
+              grid = DEFAULT_247_GRID
+              option = next(o for o in build_weekly_shift_options(grid)
+                            if o.shape == "PT4" and o.is_night and o.start_day == 0)
+              agent = WeeklyAgent(801, "SYNTHETIC_AGENT", "part_time", 0.0, 4.0)
+              required = np.zeros(grid.total_intervals, dtype=int)
+              required[list(option.coverage_slots)] = 1
+              frame = pd.DataFrame({"week_interval": range(grid.total_intervals),
+                  "required_agents": required, "min_presence_floor": np.zeros(grid.total_intervals, int)})
+              config = WeeklySolverConfig(max_consecutive_nights=0,
+                                          full_time_night_min=0, full_time_night_max=0)
+              actual = {}
+              for label, solve, kwargs in (("CBC", solve_weekly_schedule, {}),
+                       ("CP-SAT", solve_weekly_schedule_cpsat, {"workers": 1})):
+                  schedule = solve([agent], [option], frame, config=config, grid=grid,
+                                   time_limit_sec=10, gap=0, **kwargs)
+                  actual[label] = {"assigned_nights": sum(a.option.is_night for a in schedule.assignments),
+                                   "status": schedule.status}
+              return {"status": "finding" if any(v["assigned_nights"] for v in actual.values()) else "passed",
+                      "expected": "zero assigned nights when the maximum is zero", "actual": actual}
+          probe("zero-night-cap", night_cap)
+          
+          def leave_probe():
+              grid = DEFAULT_247_GRID
+              option = next(o for o in build_weekly_shift_options(grid)
+                            if o.shape == "FT8" and o.start_day == 6 and o.start_slot >= 88)
+              checks_local = {}
+              for label, slot in (("paid_or_meal_break", option.break_slots[0]),
+                                  ("monday_carryover", next(s for s in option.occupied_slots if s < 96))):
+                  agent = WeeklyAgent(802, "SYNTHETIC_LEAVE", "full_time", 0.0, 40.0,
+                                      frozenset([slot]))
+                  checks_local[label] = not eligible_for_option(agent, option)
+              return {"status": "passed" if all(checks_local.values()) else "finding", "actual": checks_local}
+          probe("leave-including-break-and-week-wrap", leave_probe)
+          
+          def api_probe():
+              import httpx
+              import api.main as api_main
+              api_main.audit_vault = SovereignAuditVault()
+              payload = {"actor": "SYNTHETIC_SUPERVISOR", "action": "AUDIT_PROBE",
+                         "target_agent": "SYNTHETIC_AGENT", "delta": {"test_only": True}}
+              async def requests():
+                  async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api_main.app),
+                                                base_url="http://audit.invalid") as client:
+                      first = await client.post("/v1/audit/mutations", json=payload)
+                      second = await client.post("/v1/audit/mutations", json=payload)
+                      return {"first_status": first.status_code, "second_status": second.status_code,
+                              "first_record": first.json(), "second_record": second.json()}
+              result = asyncio.run(requests())
+              return {"status": "finding" if result["first_status"] == 201 else "passed",
+                      "scope": "in-process ASGI calls only; no live service",
+                      "authentication_header_sent": False, "identical_request_repeated": True,
+                      "actual": result}
+          probe("audit-api-authentication-and-retry", api_probe)
+          
+          def vault_probe():
+              with tempfile.TemporaryDirectory() as temporary:
+                  path = Path(temporary) / "vault.jsonl"
+                  first = SovereignAuditVault(path)
+                  second = SovereignAuditVault(path)
+                  first.record_mutation("A", "AUDIT_PROBE", "SYNTHETIC_AGENT", {"writer": 1})
+                  second.record_mutation("B", "AUDIT_PROBE", "SYNTHETIC_AGENT", {"writer": 2})
+                  indices = [json.loads(line)["index"] for line in path.read_text().splitlines()]
+                  try:
+                      SovereignAuditVault(path)
+                  except AuditIntegrityError as exc:
+                      return {"status": "finding", "record_indices": indices,
+                              "restart_error": str(exc),
+                              "scope": "two instances sharing one JSONL file"}
+                  return {"status": "passed", "record_indices": indices}
+          probe("audit-vault-multiple-writers", vault_probe)
+          
+          def cli_error_probe():
+              out = root / "invalid-cli"
+              proc = subprocess.run([sys.executable, "run_pattern.py", "weekday_extended",
+                  "--time-limit", "0", "--out", str(out)], capture_output=True, text=True, timeout=60)
+              (root / "invalid-cli.log").write_text(proc.stdout + proc.stderr)
+              outcome = json.loads((out / "weekday_extended.json").read_text())["outcome"]
+              return {"status": "finding" if proc.returncode == 0 and outcome == "error" else "passed",
+                      "returncode": proc.returncode, "record_outcome": outcome,
+                      "expected": "nonzero exit status on caught execution error"}
+          probe("pattern-cli-error-exit", cli_error_probe)
+          
+          for pattern in ("weekday_extended", "seven_day_extended", "continuous_247"):
+              def outcome_check(pattern=pattern):
+                  data = json.loads((root / "patterns" / (pattern + ".json")).read_text())
+                  return None if data["outcome"] == "solved" else data
+              command("pattern-" + pattern,
+                  [sys.executable, "run_pattern.py", pattern, "--time-limit", "60",
+                   "--gap", "0.03", "--out", str(root / "patterns")], 180, outcome_check)
+          
+          command("schedule-csv-xlsx-png-export", [sys.executable, "export_schedules.py",
+                  "--time-limit", "60", "--out", str(root / "schedules")], 400)
+          command("legacy-pipeline", [sys.executable, "run_pipeline.py", "--time-limit", "60",
+                  "--assets", str(root / "legacy-charts")], 220)
+          for filename in ("schedule.csv", "coverage.csv", "agent_hours.csv"):
+              path = Path("data") / filename
+              if path.exists():
+                  shutil.copy2(path, root / ("legacy-" + filename))
+          command("stored-247-chart-render", [sys.executable, "run_charts.py",
+                  "--out", str(root / "247-charts")], 180)
+          command("greedy-versus-cbc-demo", [sys.executable, "-m", "src.benchmark"], 220)
+          
+          def export_reconstruction():
+              from collections import Counter
+              from src.patterns import PATTERNS, build_pattern_options, pattern_roster
+              results = []
+              for directory in (Path("artifacts/schedules"), root / "schedules"):
+                  for key, pattern in PATTERNS.items():
+                      frame = pd.read_csv(directory / ("schedule_" + key + ".csv"))
+                      cover = pd.read_csv(directory / ("coverage_" + key + ".csv"))
+                      options = {o.id: o for o in build_pattern_options(pattern)}
+                      roster = {a.id: a for a in pattern_roster(pattern)}
+                      coverage = np.zeros(pattern.grid.total_intervals, dtype=int)
+                      hours = Counter()
+                      days = Counter()
+                      for row in frame.itertuples():
+                          option = options[row.shift_id]
+                          assert eligible_for_option(roster[row.agent_id], option)
+                          coverage[list(option.coverage_slots)] += 1
+                          hours[row.agent_id] += option.paid_hours
+                          days[(row.agent_id, option.start_day)] += 1
+                          assert float(row.paid_hours) == option.paid_hours
+                      assert np.array_equal(coverage, cover["scheduled"].to_numpy(dtype=int))
+                      assert all(h <= roster[a].max_weekly_hours + 1e-8 for a, h in hours.items())
+                      assert all(count <= 1 for count in days.values())
+                      results.append({"directory": str(directory), "pattern": key, "shifts": len(frame),
+                                      "intervals": len(coverage), "paid_hours": sum(hours.values())})
+              return {"status": "passed", "actual": results}
+          probe("stored-and-fresh-export-reconstruction", export_reconstruction)
+          
+          manifest = [{"file": str(p.relative_to(root)), "bytes": p.stat().st_size,
+                       "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                      for p in sorted(root.rglob("*")) if p.is_file()]
+          (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+          summary = {"source": actual_sha, "checks": checks, "probes": probes,
+                     "note": "Findings are audit observations; project files and tests were not altered.",
+                     "unexecuted": ["No package/container/frontend build manifest in reviewed tree",
+                                    "No City tenant, Cisco connector, Entra/RLS, SharePoint publication integration"]}
+          (root / "results.json").write_text(json.dumps(summary, indent=2))
+          print("AUDIT_RESULTS_BEGIN", flush=True)
+          print(json.dumps(summary, indent=2), flush=True)
+          print("AUDIT_RESULTS_END", flush=True)
+          sys.exit(1 if any(c["status"] != "passed" for c in checks + probes) else 0)
+          
+          PY
+      - name: Preserve validation evidence even when a check finds a defect
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wfm-audit-e37dda1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: audit-evidence/
+          if-no-files-found: warn
+          retention-days: 14
