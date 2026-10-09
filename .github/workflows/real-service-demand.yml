@@ -1,0 +1,20 @@
+name: Real Toronto 311 request patterns (not call traffic)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  real-311-request-patterns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas
+      - name: Compute request timestamp distributions from public Toronto 311 records
+        run: python scripts/real_311_service_requests.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: city-of-toronto-311-request-proxy
+          path: results/real_311_demand_proxy.json
