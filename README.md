@@ -1,5 +1,23 @@
 # wfm-schedule-optimizer
 
+## Independently processed real Toronto 311 demand proxy (October 2026)
+
+A separate, passing [GitHub Actions run](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/runs/37934882930) downloaded the **actual City of Toronto 2025 service-request records** and ran `python scripts/real_311_service_requests.py`. The recorded results:
+
+| Observed 311 activity | Count |
+|---|---:|
+| Service requests in 2025 | 464,080 |
+| Peak month (February) | 53,268 |
+| Peak 15-minute interval | February 19, 2025, 10:00 AM |
+| Requests in that interval | 142 |
+| Active 15-minute intervals with service requests | 31,868 |
+
+**Methodological boundary:** these are *service requests from all intake channels*, not call arrivals. No average handling times, real agent rosters, service-level goals or sick/leave schedules were supplied. The optimizer's separate numerical and staffing examples still use deliberately generated roster/demand data; **no observed 311 staff schedule or savings figures have been validated**. The real-data script is a descriptive input-stage adapter, not a workforce solution.
+
+---
+
+
+
 [![ci-cd](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/jibrankazi/wfm-schedule-optimizer/actions/workflows/ci-cd.yml)
 ![python](https://img.shields.io/badge/python-3.12-blue)
 ![solver](https://img.shields.io/badge/solver-CBC%20via%20PuLP-orange)
