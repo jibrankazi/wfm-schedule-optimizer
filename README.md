@@ -1,3 +1,51 @@
+## Authorized four-source schedule checks (added October 12, 2026)
+
+The new `src/authorized_validation.py` can **validate a supplied real weekly
+schedule**, using a caller-authorized Cisco CUIC call export, a current employee
+roster, an approved-leave register, and an assignment CSV. It does not claim
+that real employer data is already connected, and does not infer approved leave
+from Cisco status events.
+
+Required source shapes:
+
+- **CUIC call events**: `SESSIONID`, `SESSIONSEQ`, and the exact caller-declared
+  timestamp header; source clock must be explicitly `UTC` or
+  `America/Toronto`. The two-part call key is checked for duplicates.
+- **Roster**: `id,name,kind,min_weekly_hours,max_weekly_hours`, with optional
+  `unavailable_slots` in the existing roster adapter format.
+- **Approved leave**: `agent_id,start_at,end_at,approval_status` with
+  offset-qualified datetimes; only `APPROVED` reduces availability.
+- **Schedule**: `agent_id,shift_id` using shift IDs from the existing
+  `build_weekly_shift_options()`.
+
+Example, using files held locally under access controls (do not commit
+employee identities, Cisco exports or leave records to public GitHub):
+
+```sh
+python -m src.authorized_validation \
+  --roster-csv /private/current_roster.csv \
+  --leave-csv /private/approved_leave.csv \
+  --cuic-csv /private/cisco_cuic_events.csv \
+  --assignments-csv /private/proposed_assignments.csv \
+  --week-start-local 2026-10-12 \
+  --timestamp-column CallClock \
+  --source-clock America/Toronto \
+  --output results/authorized_validation_2026-10-12.json
+```
+
+All four inputs remain unmodified. The validator checks staffing collision,
+leave overlap, employee eligibility, and weekly maximum-hour bounds; it reports
+observed calls in genuinely populated intervals and zero-coverage intervals.
+A 672-slot fixed week spanning a Toronto DST transition is refused, not
+falsely reconciled. Approved leave and call clocks must first be confirmed by
+their custodians. The test suite uses fixture records and the repository's
+published schedules are synthetic. The output is **not** a claim of verified
+source provenance, 80% answered within 60 seconds, forecast accuracy,
+full roster/policy correctness, or a completed optimization against actual
+staff availability. See the CI results for reproducible software tests.
+
+---
+
 # wfm-schedule-optimizer
 
 ## Independently processed real Toronto 311 demand proxy (October 2026)
