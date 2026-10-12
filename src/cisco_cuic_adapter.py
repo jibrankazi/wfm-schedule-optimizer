@@ -48,9 +48,17 @@ def aggregate_cuic_calls(
     if timestamps.dt.tz is not None:
         raise ValueError("Timestamp already has an offset; provide a naive source-local clock column")
     # Toronto's fall-back hour is ambiguous; refuse rather than guessing.
-    localized = timestamps.dt.tz_localize(
-        source_clock, ambiguous="raise", nonexistent="raise"
-    ).dt.tz_convert("UTC")
+    try:
+        localized = timestamps.dt.tz_localize(
+            source_clock, ambiguous="raise", nonexistent="raise"
+        ).dt.tz_convert("UTC")
+    except Exception as exc:
+        # Pandas raises different exception types and even bare timestamp
+        # messages across timezone backends. Never silently adjust clocks.
+        raise ValueError(
+            "Ambiguous, nonexistent or otherwise invalid source-local CUIC timestamp; "
+            "verify the clock and original offset instead of guessing"
+        ) from exc
     if call_count_column is None:
         counts = pd.Series(1, index=frame.index, dtype="int64")
         definition = "One presented-call event per unique SESSIONID+SESSIONSEQ row"
