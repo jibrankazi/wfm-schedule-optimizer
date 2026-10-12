@@ -118,7 +118,7 @@ def validate_operational_week(
     on_phone = [0] * SLOTS
     assigned = set()
     paid_hours = {agent.id: 0.0 for agent in agents}
-    occupied = {agent.id: set() for agent in agents}
+    occupied: dict[int, set[int]] = {agent.id: set() for agent in agents}
     for record in schedule.to_dict("records"):
         try:
             agent_id = int(record["agent_id"])
@@ -153,7 +153,7 @@ def validate_operational_week(
         "assignments_sha256": hashlib.sha256(schedule_path.read_bytes()).hexdigest(),
         "employee_count": len(agents),
         "scheduled_shifts": len(assigned),
-        "observed_cuic_intervals": int(source_report["actual_intervals_with_source_records"]),
+        "observed_cuic_intervals": int(str(source_report["actual_intervals_with_source_records"])),
         "observed_call_units": int(sum(observed)),
         "on_phone_agent_slot_hours": round(sum(on_phone) * 0.25, 2),
         "on_phone_slots_with_zero_coverage_and_observed_calls":
