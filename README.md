@@ -595,3 +595,27 @@ edge of their own ceiling rather than properties of the method:
   exhausted memory during construction. A coarser shift-start grid - closer to
   how a continuous desk is actually run - brings it to 13,090 binaries and a
   68-second proven-optimal solve.
+
+## Explicit-clock Cisco CUIC CSV ingestion gate
+
+Use src/cisco_cuic_adapter.py only with an authorized local CUIC export and
+the exact file's confirmed call-event timestamp header. The parser requires
+the original SESSIONID + SESSIONSEQ pair, refuses duplicate keys, refuses
+ambiguous Toronto daylight-saving clock records, and requires an explicit
+source-clock choice: UTC or America/Toronto. It never assumes that call-report
+timestamps are UTC merely because Cisco agent state events may be UTC.
+
+Example (replace CallClock with the actual export timestamp header):
+
+    python -m src.cisco_cuic_adapter --input /secure/calls.csv --timestamp-column CallClock --source-clock America/Toronto --output results/your_cuic_intervals.csv
+
+Output contains only observed call counts, UTC interval timestamps, matching
+Mississauga/Toronto local timestamps with DST offsets and a source checksum.
+No caller IDs, session identifiers, or employee identifiers are exported.
+An optional --count-column explicitly selects an aggregated Calls Presented
+field; without it, one unique key is one event, not an assumed Cisco statistic.
+
+**No real Cisco CUIC CSV is present in this repository or used by CI.** The
+unit tests use synthetic software fixtures. This adapter does not verify
+source authenticity, staffing requirements, agent schedules, AHT or service
+level, and must not be described as a validated operational roster.
