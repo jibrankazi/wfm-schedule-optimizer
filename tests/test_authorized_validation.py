@@ -72,3 +72,30 @@ def test_dst_transition_weeks_fail_closed():
     with pytest.raises(ValueError, match="DST"):
         planning_week("2026-03-02")
     assert planning_week("2026-10-12")[0] == datetime(2026, 10, 12, 4, tzinfo=timezone.utc)
+
+
+def test_full_week_validator_accepts_only_explicit_cuic_excel_detail_sheet(tmp_path):
+    roster, leave, original_csv, assignments = inputs(tmp_path)
+    events = pd.read_csv(original_csv, dtype=str, keep_default_na=False)
+    workbook = tmp_path / "authorized_fixture.xlsx"
+    with pd.ExcelWriter(workbook, engine="openpyxl") as writer:
+        pd.DataFrame({"title": ["fixture cover; not call events"]}).to_excel(
+            writer, sheet_name="Cover", index=False
+        )
+        events.to_excel(writer, sheet_name="Call Detail", index=False)
+    with pytest.raises(ValueError, match="sheet-name"):
+        validate_operational_week(
+            roster_csv=roster, leave_csv=leave, cuic_csv=workbook,
+            assignments_csv=assignments, week_start_local="2026-10-12",
+            timestamp_column="CallClock", source_clock="UTC",
+        )
+    result = validate_operational_week(
+        roster_csv=roster, leave_csv=leave, cuic_csv=workbook,
+        assignments_csv=assignments, week_start_local="2026-10-12",
+        timestamp_column="CallClock", source_clock="UTC",
+        cuic_sheet="Call Detail",
+    )
+    assert result["observed_call_units"] == 2
+    assert result["source_evidence"]["source_file_format"] == ".xlsx"
+    assert result["source_evidence"]["selected_excel_worksheet"] == "Call Detail"
+    assert result["cisco_and_hr_data_provenance_independently_verified"] is False
