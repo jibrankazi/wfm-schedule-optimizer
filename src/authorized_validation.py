@@ -97,12 +97,15 @@ def validate_operational_week(
     *, roster_csv: str | Path, leave_csv: str | Path,
     cuic_csv: str | Path, assignments_csv: str | Path,
     week_start_local: str, timestamp_column: str, source_clock: str,
+    cuic_sheet: str | None = None,
 ) -> dict:
     start, end = planning_week(week_start_local)
     agents = load_agents_csv(roster_csv)
     agents, leave_evidence = with_approved_leave(agents, leave_csv, start, end)
     agents_by_id = {a.id: a for a in agents}
-    demand, source_report = aggregate_cuic_calls(cuic_csv, timestamp_column, source_clock)
+    demand, source_report = aggregate_cuic_calls(
+        cuic_csv, timestamp_column, source_clock, sheet_name=cuic_sheet
+    )
     timestamps = pd.to_datetime(demand["interval_start_utc"], utc=True)
     if ((timestamps < pd.Timestamp(start)) | (timestamps >= pd.Timestamp(end))).any():
         raise ValueError("CUIC export includes observations outside selected planning week")
@@ -175,6 +178,8 @@ def main() -> None:
     for flag in ("roster-csv", "leave-csv", "cuic-csv", "assignments-csv",
                  "week-start-local", "timestamp-column", "source-clock"):
         p.add_argument("--" + flag, required=True)
+    p.add_argument("--cuic-sheet", default=None,
+                   help="Required exact worksheet name when --cuic-csv points to an Excel .xlsx export")
     p.add_argument("--output", required=True)
     args = p.parse_args()
     output = Path(args.output)
@@ -188,7 +193,7 @@ def main() -> None:
         roster_csv=args.roster_csv, leave_csv=args.leave_csv,
         cuic_csv=args.cuic_csv, assignments_csv=args.assignments_csv,
         week_start_local=args.week_start_local, timestamp_column=args.timestamp_column,
-        source_clock=args.source_clock,
+        source_clock=args.source_clock, cuic_sheet=args.cuic_sheet,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("x", encoding="utf-8") as f:
