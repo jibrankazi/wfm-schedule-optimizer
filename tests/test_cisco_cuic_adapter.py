@@ -77,3 +77,42 @@ def test_invalid_or_unknown_source_clock_and_missing_columns_fail(tmp_path: Path
     frame.to_csv(path, index=False)
     with pytest.raises(ValueError, match="whole numbers"):
         aggregate_cuic_calls(path, "CallClock", "UTC", "Calls Presented")
+
+
+def test_excel_cuic_requires_explicit_detail_worksheet_and_preserves_session_keys(tmp_path: Path) -> None:
+    csv_path = make_csv(tmp_path, ["2026-02-02 10:00:00", "2026-02-02 10:04:00"])
+    frame = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+    frame["SESSIONID"] = ["000042", "000043"]
+    frame["SESSIONSEQ"] = ["0001", "0001"]
+    xlsx = tmp_path / "fake_cuic.xlsx"
+    with pd.ExcelWriter(xlsx, engine="openpyxl") as writer:
+        pd.DataFrame({"source": ["fixture: not the event export"]}).to_excel(
+            writer, sheet_name="Cover", index=False
+        )
+        frame.to_excel(writer, sheet_name="Call Detail", index=False)
+    with pytest.raises(ValueError, match="sheet-name"):
+        aggregate_cuic_calls(xlsx, "CallClock", "UTC")
+    with pytest.raises(ValueError, match="worksheet"):
+        aggregate_cuic_calls(xlsx, "CallClock", "UTC", sheet_name="Missing")
+    with pytest.raises(ValueError, match="missing explicitly"):
+        aggregate_cuic_calls(xlsx, "CallClock", "UTC", sheet_name="Cover")
+    intervals, audit = aggregate_cuic_calls(
+        xlsx, "CallClock", "UTC", sheet_name="Call Detail"
+    )
+    assert intervals.observed_calls.tolist() == [2]
+    assert audit["source_file_format"] == ".xlsx"
+    assert audit["selected_excel_worksheet"] == "Call Detail"
+    assert audit["observed_unique_call_keys"] == 2
+    assert not audit["cisco_origin_and_clock_independently_authenticated"]
+
+
+def test_excel_duplicate_keys_and_csv_with_sheet_argument_are_refused(tmp_path: Path) -> None:
+    csv_path = make_csv(tmp_path, ["2026-02-02 10:00:00", "2026-02-02 10:03:00"])
+    with pytest.raises(ValueError, match="worksheet name"):
+        aggregate_cuic_calls(csv_path, "CallClock", "UTC", sheet_name="Call Detail")
+    frame = pd.read_csv(csv_path, dtype=str)
+    frame.loc[1, "SESSIONID"] = frame.loc[0, "SESSIONID"]
+    xlsx = tmp_path / "duplicate_export.xlsx"
+    frame.to_excel(xlsx, sheet_name="Call Detail", index=False)
+    with pytest.raises(ValueError, match="Duplicate SESSIONID"):
+        aggregate_cuic_calls(xlsx, "CallClock", "UTC", sheet_name="Call Detail")
