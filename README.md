@@ -1,3 +1,42 @@
+## Authorized Cisco Excel call-detail worksheet ingestion (October 13, 2026)
+
+The existing CUIC adapter and four-source validator now also accept local
+**.xlsx call-detail exports**, in addition to CSV. Because CUIC workbooks can
+contain cover sheets, agent-state worksheets or report parameters, the exact
+call-events worksheet **must** be selected; the software will never guess the
+first sheet. Required columns (`SESSIONID`, `SESSIONSEQ`, caller-confirmed
+timestamp), explicit source clock and duplicate-key protection remain
+unchanged. No employee IDs or session IDs are saved in output summaries.
+Tests use artificial Excel workbooks; no private Cisco file was obtained.
+
+For a real **authorized** Cisco workbook, keep roster, approved leave and
+assignments files locally, and run:
+
+```sh
+python -m src.authorized_validation \
+  --roster-csv /private/current_roster.csv \
+  --leave-csv /private/approved_leave.csv \
+  --cuic-csv /private/authorized_cuic.xlsx \
+  --cuic-sheet "Call Detail" \
+  --assignments-csv /private/proposed_assignments.csv \
+  --week-start-local 2026-10-12 \
+  --timestamp-column CallClock \
+  --source-clock UTC \
+  --output results/authorized_2026-10-12_from_excel.json
+```
+
+`Call Detail` and `CallClock` are **examples only**, not assertions about the
+actual workbook's sheet/headers. Confirm the clock from the CUIC report;
+agent-status timestamps and call-record timestamps can use different clocks.
+Excel sessions originally stored as numeric cells may have already lost
+leading zeroes; inspect the export rather than assuming the data can be
+reconstructed. If multiple rows share `SESSIONID+SESSIONSEQ`, the validator
+still refuses to infer how many calls they represent. This is software support
+for an incoming authorized file, **not** proof that genuine Cisco and HR
+sources have been connected or schedules operationally validated.
+
+---
+
 ## Authorized four-source schedule checks (added October 12, 2026)
 
 The new `src/authorized_validation.py` can **validate a supplied real weekly
