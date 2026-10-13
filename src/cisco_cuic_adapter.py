@@ -1,4 +1,4 @@
-"""Strict caller-supplied Cisco CUIC CSV -> observed 15-minute CALL volume.
+"""Strict caller-supplied Cisco CUIC CSV or selected Excel worksheet -> observed 15-minute CALL volume.
 
 No Cisco authentication, no assumed timestamp clock, no employee roster and
 no promise of schedule optimization. Source timestamps require an explicit
@@ -17,26 +17,55 @@ import pandas as pd
 REQUIRED_IDS = ("SESSIONID", "SESSIONSEQ")
 ALLOWED_CLOCKS = ("UTC", "America/Toronto")
 
+def read_cuic_source(path: str | Path, *, sheet_name: str | None = None) -> pd.DataFrame:
+    """Read CSV or an explicitly selected .xlsx worksheet, with no auto-guessing.
+
+    Excel values are read as strings to preserve Cisco session-key text when
+    that text was retained by the exporter. If Excel had stored identifiers as
+    numeric cells, any previously lost leading zeros cannot be recovered here.
+    """
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        if sheet_name is not None:
+            raise ValueError("A worksheet name cannot be used with CSV")
+        return pd.read_csv(path, dtype=str, keep_default_na=False)
+    if path.suffix.lower() == ".xlsx":
+        if not sheet_name or not sheet_name.strip():
+            raise ValueError("Excel CUIC input requires an explicit --sheet-name")
+        # Reading an explicit worksheet prevents accidentally choosing a cover,
+        # parameters or agent-state worksheet instead of call-detail records.
+        try:
+            frame = pd.read_excel(path, sheet_name=sheet_name,
+                                  dtype=str, keep_default_na=False, engine="openpyxl")
+        except ValueError as exc:
+            raise ValueError("Requested Cisco Excel worksheet is absent or invalid") from exc
+        if not isinstance(frame, pd.DataFrame):
+            raise ValueError("Expected a single CUIC worksheet")
+        return frame
+    raise ValueError("CUIC input must be .csv or .xlsx; other formats are refused")
+
+
 
 def aggregate_cuic_calls(
     path: str | Path,
     timestamp_column: str,
     source_clock: str,
     call_count_column: str | None = None,
+    *, sheet_name: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Fail closed on ambiguous phone-call timestamps and duplicate event keys."""
     if source_clock not in ALLOWED_CLOCKS:
         raise ValueError("Source clock must be explicitly UTC or America/Toronto")
     path = Path(path)
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = read_cuic_source(path, sheet_name=sheet_name)
     mandatory = set(REQUIRED_IDS) | {timestamp_column}
     if call_count_column is not None:
         mandatory.add(call_count_column)
     missing = mandatory - set(frame.columns)
     if missing:
-        raise ValueError(f"CUIC CSV missing explicitly required columns: {sorted(missing)}")
+        raise ValueError(f"CUIC source missing explicitly required columns: {sorted(missing)}")
     if frame.empty:
-        raise ValueError("CUIC CSV contains no observed call rows")
+        raise ValueError("CUIC source contains no observed call rows")
     for identifier in REQUIRED_IDS:
         if frame[identifier].astype(str).str.strip().eq("").any():
             raise ValueError(f"Missing CUIC {identifier}")
@@ -89,6 +118,8 @@ def aggregate_cuic_calls(
         raise AssertionError("Observed call count was lost during interval aggregation")
     report: dict[str, object] = {
         "original_file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "source_file_format": path.suffix.lower(),
+        "selected_excel_worksheet": sheet_name if path.suffix.lower() == ".xlsx" else None,
         "caller_declared_source_clock": source_clock,
         "timestamp_column": timestamp_column,
         "call_count_definition": definition,
@@ -110,6 +141,8 @@ def main() -> None:
                         help="Exact timestamp header from the CUIC export")
     parser.add_argument("--source-clock", required=True, choices=ALLOWED_CLOCKS,
                         help="Confirm from Cisco CUIC, never guess whether clock is UTC/local")
+    parser.add_argument("--sheet-name", default=None,
+                        help="Required exact worksheet name for .xlsx; not used for CSV")
     parser.add_argument("--count-column", default=None,
                         help="Optional explicit aggregate call-count header")
     parser.add_argument("--output", default="results/cisco_cuic_observed_intervals.csv")
@@ -120,7 +153,8 @@ def main() -> None:
     if destination.exists():
         raise FileExistsError("Output already exists; choose a new evidence path")
     intervals, report = aggregate_cuic_calls(
-        args.input, args.timestamp_column, args.source_clock, args.count_column
+        args.input, args.timestamp_column, args.source_clock, args.count_column,
+        sheet_name=args.sheet_name,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
     intervals.to_csv(destination, index=False)
